@@ -1,5 +1,5 @@
-# Binaries
-broker
+# Binaries (but not the cmd/broker directory)
+/broker
 *.exe
 *.dll
 *.so
