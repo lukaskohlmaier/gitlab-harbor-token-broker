@@ -1,5 +1,5 @@
-# Build stage
-FROM golang:1.21-alpine AS builder
+# Build stage for Go application
+FROM golang:1.21-alpine AS go-builder
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates
@@ -13,16 +13,34 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy source code
-COPY . .
+COPY cmd ./cmd
+COPY internal ./internal
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o broker ./cmd/broker
 
+# Build stage for UI
+FROM node:20-alpine AS ui-builder
+
+WORKDIR /build/ui
+
+# Copy package files
+COPY ui/package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy UI source
+COPY ui/ ./
+
+# Build UI
+RUN npm run build
+
 # Final stage
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS
-RUN apk --no-cache add ca-certificates
+# Install ca-certificates for HTTPS and wget for healthcheck
+RUN apk --no-cache add ca-certificates wget
 
 # Create non-root user
 RUN addgroup -g 1000 broker && \
@@ -30,11 +48,18 @@ RUN addgroup -g 1000 broker && \
 
 WORKDIR /app
 
-# Copy binary from builder
-COPY --from=builder /build/broker .
+# Copy binary from go-builder
+COPY --from=go-builder /build/broker .
 
-# Copy example config (can be overridden via volume mount)
+# Copy UI build from ui-builder
+COPY --from=ui-builder /build/ui/dist ./ui/dist
+
+# Copy migrations
+COPY migrations ./migrations
+
+# Copy example configs (can be overridden via volume mount)
 COPY config.yaml config.example.yaml
+COPY config.db.yaml config.db.example.yaml
 
 # Change ownership
 RUN chown -R broker:broker /app
