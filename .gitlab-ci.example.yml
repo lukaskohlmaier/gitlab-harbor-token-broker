@@ -1,0 +1,121 @@
+# Example GitLab CI configuration showing how to use the Harbor Token Broker
+
+variables:
+  BROKER_URL: "https://broker.example.com"
+  HARBOR_URL: "harbor.example.com"
+
+stages:
+  - build
+  - deploy
+
+# Example: Build and push Docker image
+build-docker-image:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  # Configure OIDC token for broker authentication
+  id_tokens:
+    CI_JOB_JWT_V2:
+      aud: https://broker.example.com
+  script:
+    # Request temporary Harbor credentials from broker
+    - |
+      echo "Requesting Harbor credentials from broker..."
+      RESPONSE=$(curl -f -X POST "$BROKER_URL/token" \
+        -H "Authorization: Bearer $CI_JOB_JWT_V2" \
+        -H "Content-Type: application/json" \
+        -d "{
+          \"harbor_project\": \"backend-project\",
+          \"permissions\": \"read-write\"
+        }")
+    
+    # Extract credentials from response
+    - export HARBOR_USERNAME=$(echo $RESPONSE | jq -r '.username')
+    - export HARBOR_PASSWORD=$(echo $RESPONSE | jq -r '.password')
+    - export EXPIRES_AT=$(echo $RESPONSE | jq -r '.expires_at')
+    
+    - echo "Credentials obtained, valid until $EXPIRES_AT"
+    
+    # Login to Harbor
+    - echo "$HARBOR_PASSWORD" | docker login $HARBOR_URL -u "$HARBOR_USERNAME" --password-stdin
+    
+    # Build and push image
+    - docker build -t $HARBOR_URL/backend-project/myapp:$CI_COMMIT_SHA .
+    - docker push $HARBOR_URL/backend-project/myapp:$CI_COMMIT_SHA
+    
+    # Tag as latest
+    - docker tag $HARBOR_URL/backend-project/myapp:$CI_COMMIT_SHA $HARBOR_URL/backend-project/myapp:latest
+    - docker push $HARBOR_URL/backend-project/myapp:latest
+  only:
+    - main
+
+# Example: Pull image (read-only access)
+deploy-to-staging:
+  stage: deploy
+  image: docker:latest
+  services:
+    - docker:dind
+  id_tokens:
+    CI_JOB_JWT_V2:
+      aud: https://broker.example.com
+  script:
+    # Request read-only credentials
+    - |
+      RESPONSE=$(curl -f -X POST "$BROKER_URL/token" \
+        -H "Authorization: Bearer $CI_JOB_JWT_V2" \
+        -H "Content-Type: application/json" \
+        -d "{
+          \"harbor_project\": \"backend-project\",
+          \"permissions\": \"read\"
+        }")
+    
+    - export HARBOR_USERNAME=$(echo $RESPONSE | jq -r '.username')
+    - export HARBOR_PASSWORD=$(echo $RESPONSE | jq -r '.password')
+    
+    # Login and pull image
+    - echo "$HARBOR_PASSWORD" | docker login $HARBOR_URL -u "$HARBOR_USERNAME" --password-stdin
+    - docker pull $HARBOR_URL/backend-project/myapp:$CI_COMMIT_SHA
+    
+    # Deploy to staging environment
+    - echo "Deploying to staging..."
+    # Add your deployment commands here
+  only:
+    - main
+
+# Example: Using a reusable script
+build-with-script:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  id_tokens:
+    CI_JOB_JWT_V2:
+      aud: https://broker.example.com
+  before_script:
+    # Create reusable login script
+    - |
+      cat > /tmp/harbor-login.sh << 'EOF'
+      #!/bin/sh
+      set -e
+      HARBOR_PROJECT=$1
+      PERMISSIONS=${2:-read}
+      
+      echo "Requesting credentials for project: $HARBOR_PROJECT with permissions: $PERMISSIONS"
+      RESPONSE=$(curl -f -X POST "$BROKER_URL/token" \
+        -H "Authorization: Bearer $CI_JOB_JWT_V2" \
+        -H "Content-Type: application/json" \
+        -d "{\"harbor_project\": \"$HARBOR_PROJECT\", \"permissions\": \"$PERMISSIONS\"}")
+      
+      export HARBOR_USERNAME=$(echo $RESPONSE | jq -r '.username')
+      export HARBOR_PASSWORD=$(echo $RESPONSE | jq -r '.password')
+      
+      echo "$HARBOR_PASSWORD" | docker login $HARBOR_URL -u "$HARBOR_USERNAME" --password-stdin
+      echo "Successfully logged in to Harbor"
+      EOF
+    - chmod +x /tmp/harbor-login.sh
+  script:
+    # Use the script
+    - /tmp/harbor-login.sh backend-project read-write
+    - docker build -t $HARBOR_URL/backend-project/myapp:custom .
+    - docker push $HARBOR_URL/backend-project/myapp:custom

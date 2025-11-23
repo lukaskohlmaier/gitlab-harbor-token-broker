@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  broker:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount your configuration file
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      # Override Harbor credentials via environment variables
+      # This is more secure than storing them in the config file
+      - HARBOR_USERNAME=${HARBOR_USERNAME:-admin}
+      - HARBOR_PASSWORD=${HARBOR_PASSWORD:-Harbor12345}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    # Run as non-root user (already configured in Dockerfile)
+    # Security options for production
+    security_opt:
+      - no-new-privileges:true
+    # Read-only root filesystem (except /tmp)
+    read_only: true
+    tmpfs:
+      - /tmp
+
+# For production deployment behind a reverse proxy with TLS
+  # nginx:
+  #   image: nginx:alpine
+  #   ports:
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./certs:/etc/nginx/certs:ro
+  #   depends_on:
+  #     - broker

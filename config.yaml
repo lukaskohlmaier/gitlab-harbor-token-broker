@@ -1,0 +1,59 @@
+# Harbor CI Credential Broker Configuration
+
+server:
+  port: 8080
+  read_timeout: 10s
+  write_timeout: 10s
+
+gitlab:
+  # GitLab instance URL
+  instance_url: "https://gitlab.example.com"
+  
+  # Audience claim expected in JWT (typically the broker's URL)
+  audience: "https://broker.example.com"
+  
+  # JWKS URL for JWT validation (optional, will be auto-constructed if not provided)
+  # jwks_url: "https://gitlab.example.com/oauth/discovery/keys"
+  
+  # Allowed issuers (optional, defaults to instance_url)
+  issuers:
+    - "https://gitlab.example.com"
+
+harbor:
+  # Harbor instance URL
+  url: "https://harbor.example.com"
+  
+  # Admin credentials for creating robot accounts
+  # Can be overridden with HARBOR_USERNAME and HARBOR_PASSWORD environment variables
+  username: "admin"
+  password: "Harbor12345"
+
+security:
+  # TTL for robot accounts in minutes (default: 10)
+  robot_ttl_minutes: 10
+
+# Authorization policies
+policies:
+  # Example: Allow mygroup/myproject to read from backend-project
+  - gitlab_project: "mygroup/myproject"
+    harbor_projects:
+      - "backend-project"
+    allowed_permissions:
+      - "read"
+  
+  # Example: Allow mygroup/deploy-pipeline to read and write to frontend-project
+  - gitlab_project: "mygroup/deploy-pipeline"
+    harbor_projects:
+      - "frontend-project"
+      - "shared-images"
+    allowed_permissions:
+      - "read"
+      - "write"
+      - "read-write"
+  
+  # Example: Allow any project in engineering group to read from library
+  - gitlab_project: "engineering/backend-service"
+    harbor_projects:
+      - "library"
+    allowed_permissions:
+      - "read"
