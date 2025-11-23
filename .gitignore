@@ -1,0 +1,34 @@
+# Binaries
+broker
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Go workspace file
+go.work
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+/tmp/
+*.tmp
+
+# Config with secrets (keep example)
+# config.yaml should be version controlled as an example
+# but can be ignored if it contains real secrets
