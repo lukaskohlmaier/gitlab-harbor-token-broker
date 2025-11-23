@@ -112,16 +112,20 @@ func (c *Client) CreateRobotAccount(projectName, robotName, permission string, t
 	access := c.mapPermissionToAccess(permission)
 
 	// Create robot account request
-	// Duration is in days for Harbor API, but we want minutes
-	// Convert minutes to days (fractional)
-	durationDays := float64(ttlMinutes) / (60.0 * 24.0)
+	// NOTE: Harbor API's duration field expects days and has a minimum of 1 day.
+	// For short-lived credentials (< 1 day), we set duration to 1 day but rely on
+	// our application logic to only use the credentials for the specified TTL.
+	// The expires_at timestamp we return to clients reflects the actual intended TTL.
+	durationDays := int64(1) // Minimum allowed by Harbor API
+	if ttlMinutes >= 24*60 {
+		// If TTL is 1 day or more, convert properly
+		durationDays = int64(float64(ttlMinutes)/(60.0*24.0) + 0.5)
+	}
 
-	// Harbor expects duration in minutes for expiration
-	// We'll set it via duration field which expects days, but we can also use expires_at
 	request := CreateRobotRequest{
 		Name:        robotName,
 		Description: "Temporary CI robot account",
-		Duration:    -1, // We'll handle expiration through the API
+		Duration:    durationDays,
 		Level:       "project",
 		Permissions: []Permission{
 			{
@@ -130,16 +134,6 @@ func (c *Client) CreateRobotAccount(projectName, robotName, permission string, t
 				Access:    access,
 			},
 		},
-	}
-
-	// For shorter TTL, we need to use the duration field properly
-	// Harbor v2 API uses duration in days
-	if durationDays < 1 {
-		// For very short durations, round up to at least 1 day
-		// This is a Harbor API limitation
-		request.Duration = 1
-	} else {
-		request.Duration = int64(durationDays + 0.5) // Round to nearest day
 	}
 
 	body, err := json.Marshal(request)
@@ -187,12 +181,9 @@ func (c *Client) mapPermissionToAccess(permission string) []Access {
 		return []Access{
 			{Resource: "repository", Action: "pull"},
 		}
-	case "write":
-		return []Access{
-			{Resource: "repository", Action: "pull"},
-			{Resource: "repository", Action: "push"},
-		}
-	case "read-write":
+	case "write", "read-write":
+		// Both 'write' and 'read-write' require pull + push permissions
+		// as Harbor requires pull access to push images (to check if layers exist)
 		return []Access{
 			{Resource: "repository", Action: "pull"},
 			{Resource: "repository", Action: "push"},
