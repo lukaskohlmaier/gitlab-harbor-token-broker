@@ -142,10 +142,17 @@ func (h *APIHandler) HandleUpdatePolicy(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Extract ID from URL path
+	// Extract ID from URL path and validate it's numeric
 	idStr := r.URL.Path[len("/api/policies/"):]
+	// Validate that idStr contains only digits to prevent path traversal
+	for _, ch := range idStr {
+		if ch < '0' || ch > '9' {
+			h.respondError(w, http.StatusBadRequest, "invalid policy ID")
+			return
+		}
+	}
 	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
+	if err != nil || id <= 0 {
 		h.respondError(w, http.StatusBadRequest, "invalid policy ID")
 		return
 	}
@@ -192,10 +199,17 @@ func (h *APIHandler) HandleDeletePolicy(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Extract ID from URL path
+	// Extract ID from URL path and validate it's numeric
 	idStr := r.URL.Path[len("/api/policies/"):]
+	// Validate that idStr contains only digits to prevent path traversal
+	for _, ch := range idStr {
+		if ch < '0' || ch > '9' {
+			h.respondError(w, http.StatusBadRequest, "invalid policy ID")
+			return
+		}
+	}
 	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
+	if err != nil || id <= 0 {
 		h.respondError(w, http.StatusBadRequest, "invalid policy ID")
 		return
 	}

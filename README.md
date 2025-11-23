@@ -29,6 +29,8 @@ GitLab CI Pipeline → [JWT Auth] → Broker → [Policy Check] → Harbor API �
 
 - **JWT Authentication**: Validates GitLab CI OIDC tokens (CI_JOB_JWT_V2)
 - **Policy-Based Authorization**: Fine-grained control over which projects can access which Harbor projects
+- **Web UI**: React-based interface for managing policies and viewing access logs
+- **Database Integration**: PostgreSQL backend for policy storage and audit logging
 - **Least Privilege**: Robot accounts created with exact permissions requested (read/write/read-write)
 - **Short-Lived Credentials**: Configurable TTL (default: 10 minutes)
 - **Structured Audit Logging**: JSON logs with full audit trail
@@ -41,6 +43,7 @@ GitLab CI Pipeline → [JWT Auth] → Broker → [Policy Check] → Harbor API �
 - Go 1.21 or later
 - Harbor v2.x instance with admin credentials
 - GitLab instance with OIDC support
+- (Optional) PostgreSQL 12+ for database mode with UI
 
 ## 🚀 Quick Start
 
@@ -99,6 +102,55 @@ Or using Make:
 ```bash
 make run
 ```
+
+## 🖥️ Web UI and Database Mode
+
+The broker includes an optional web UI for managing policies and viewing access logs. To enable it:
+
+### 1. Enable Database Mode
+
+Use the provided `config.db.yaml` as a template:
+
+```yaml
+database:
+  enabled: true
+  connection_string: "postgresql://broker:broker_password@localhost:5432/harbor_broker?sslmode=disable"
+```
+
+Or set via environment variable:
+
+```bash
+export DATABASE_URL="postgresql://broker:password@localhost:5432/harbor_broker?sslmode=disable"
+```
+
+### 2. Start with Docker Compose
+
+The included `docker-compose.yml` automatically sets up PostgreSQL and the broker:
+
+```bash
+docker-compose up -d
+```
+
+This starts:
+- PostgreSQL database for policy and log storage
+- Broker with database migrations applied automatically
+- Web UI served at `http://localhost:8080`
+
+### 3. Access the Web UI
+
+Open your browser to `http://localhost:8080`:
+
+- **Access Logs**: View token request history with filters
+- **Policies**: Create, edit, and delete authorization policies
+
+### Database Schema
+
+When database mode is enabled, the broker automatically creates:
+
+- `access_logs` - Audit trail of all token requests
+- `policy_rules` - Authorization policies managed via UI
+
+Policies configured in the database take precedence over `config.yaml`.
 
 ## 🐳 Docker Deployment
 
@@ -310,6 +362,85 @@ Health check endpoint.
 OK
 ```
 
+### GET /api/access-logs
+
+Get access logs with pagination and filters (requires database mode).
+
+**Query Parameters:**
+- `page` (optional) - Page number (default: 1)
+- `limit` (optional) - Results per page (default: 20, max: 100)
+- `gitlab_project` (optional) - Filter by GitLab project
+- `harbor_project` (optional) - Filter by Harbor project
+- `status` (optional) - Filter by status (success/denied)
+
+**Response (200):**
+```json
+{
+  "logs": [
+    {
+      "id": 1,
+      "timestamp": "2024-01-01T12:00:00Z",
+      "gitlab_project": "mygroup/myproject",
+      "harbor_project": "backend-project",
+      "permission": "read-write",
+      "robot_id": 12345,
+      "robot_name": "robot$ci-temp-67890-1234567890",
+      "expires_at": "2024-01-01T12:10:00Z",
+      "pipeline_id": "67890",
+      "job_id": "12345",
+      "status": "success"
+    }
+  ],
+  "total": 100,
+  "page": 1,
+  "limit": 20
+}
+```
+
+### GET /api/policies
+
+Get all policy rules (requires database mode).
+
+**Response (200):**
+```json
+[
+  {
+    "id": 1,
+    "gitlab_project": "mygroup/myproject",
+    "harbor_projects": ["backend-project"],
+    "allowed_permissions": ["read", "write"],
+    "created_at": "2024-01-01T12:00:00Z",
+    "updated_at": "2024-01-01T12:00:00Z"
+  }
+]
+```
+
+### POST /api/policies
+
+Create a new policy rule (requires database mode).
+
+**Request Body:**
+```json
+{
+  "gitlab_project": "mygroup/myproject",
+  "harbor_projects": ["backend-project"],
+  "allowed_permissions": ["read", "write"]
+}
+```
+
+**Response (201):**
+Returns the created policy with `id`, `created_at`, and `updated_at` fields.
+
+### PUT /api/policies/:id
+
+Update an existing policy rule (requires database mode).
+
+### DELETE /api/policies/:id
+
+Delete a policy rule (requires database mode).
+
+**Response (204):** No content on success.
+
 ## 🔧 Configuration Reference
 
 ### Server Section
@@ -348,7 +479,23 @@ security:
   robot_ttl_minutes: 10  # Robot account TTL in minutes (default: 10)
 ```
 
-### Policy Rules
+### Database Section (Optional)
+
+```yaml
+database:
+  enabled: false  # Enable database mode for UI and persistent policies
+  connection_string: "postgresql://user:password@localhost:5432/harbor_broker?sslmode=disable"
+  # Can be overridden with DATABASE_URL environment variable
+```
+
+When `database.enabled` is `true`:
+- Policies are managed via the Web UI
+- Access logs are stored in PostgreSQL
+- The `policies` section in config is ignored
+
+### Policy Rules (Config Mode Only)
+
+When database mode is disabled, policies are configured in YAML:
 
 ```yaml
 policies:
@@ -418,6 +565,10 @@ make verify
 ├── internal/
 │   ├── config/           # Configuration management
 │   │   └── config.go
+│   ├── database/         # PostgreSQL database layer
+│   │   ├── database.go
+│   │   ├── access_log_store.go
+│   │   └── policy_store.go
 │   ├── jwt/              # JWT validation
 │   │   └── validator.go
 │   ├── policy/           # Policy engine
@@ -425,10 +576,23 @@ make verify
 │   ├── harbor/           # Harbor API client
 │   │   └── client.go
 │   ├── handler/          # HTTP handlers
-│   │   └── handler.go
+│   │   ├── handler.go
+│   │   └── api_handler.go
 │   └── logging/          # Structured logging
 │       └── logger.go
-├── config.yaml           # Example configuration
+├── migrations/           # Database migrations
+│   └── 001_initial_schema.sql
+├── ui/                   # React-based web UI
+│   ├── src/
+│   │   ├── api/          # API client
+│   │   ├── components/   # Reusable UI components
+│   │   ├── pages/        # Access Logs and Policies pages
+│   │   └── lib/          # Utility functions
+│   ├── package.json
+│   └── vite.config.ts
+├── config.yaml           # Example configuration (file mode)
+├── config.db.yaml        # Example configuration (database mode)
+├── docker-compose.yml    # Docker Compose with PostgreSQL
 ├── Dockerfile            # Container image definition
 ├── Makefile              # Build automation
 ├── go.mod                # Go module definition

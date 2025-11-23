@@ -18,7 +18,9 @@ func NewAccessLogStoreAdapter(db *DB) *AccessLogStoreAdapter {
 func (a *AccessLogStoreAdapter) LogAccess(logData interface{}) error {
 	data, ok := logData.(map[string]interface{})
 	if !ok {
-		return nil // Skip if data is not in expected format
+		// Log data is in unexpected format, but don't fail the main request
+		// This is a best-effort logging mechanism
+		return nil
 	}
 
 	log := &AccessLog{
