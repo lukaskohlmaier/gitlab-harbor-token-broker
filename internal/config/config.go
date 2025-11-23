@@ -14,6 +14,7 @@ type Config struct {
 	GitLab   GitLabConfig   `yaml:"gitlab"`
 	Harbor   HarborConfig   `yaml:"harbor"`
 	Security SecurityConfig `yaml:"security"`
+	Database DatabaseConfig `yaml:"database"`
 	Policies []PolicyRule   `yaml:"policies"`
 }
 
@@ -42,6 +43,12 @@ type HarborConfig struct {
 // SecurityConfig contains security settings
 type SecurityConfig struct {
 	RobotTTLMinutes int `yaml:"robot_ttl_minutes"`
+}
+
+// DatabaseConfig contains database connection settings
+type DatabaseConfig struct {
+	ConnectionString string `yaml:"connection_string"`
+	Enabled          bool   `yaml:"enabled"`
 }
 
 // PolicyRule defines authorization rules
@@ -84,6 +91,9 @@ func Load(path string) (*Config, error) {
 	if harborPass := os.Getenv("HARBOR_PASSWORD"); harborPass != "" {
 		cfg.Harbor.Password = harborPass
 	}
+	if dbConnStr := os.Getenv("DATABASE_URL"); dbConnStr != "" {
+		cfg.Database.ConnectionString = dbConnStr
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
@@ -109,8 +119,11 @@ func (c *Config) Validate() error {
 	if c.Harbor.Password == "" {
 		return fmt.Errorf("harbor.password is required")
 	}
-	if len(c.Policies) == 0 {
-		return fmt.Errorf("at least one policy rule is required")
+	if c.Database.Enabled && c.Database.ConnectionString == "" {
+		return fmt.Errorf("database.connection_string is required when database is enabled")
+	}
+	if !c.Database.Enabled && len(c.Policies) == 0 {
+		return fmt.Errorf("at least one policy rule is required when database is disabled")
 	}
 
 	// Validate policy rules

@@ -1,4 +1,4 @@
-# Harbor CI Credential Broker Configuration
+# Harbor CI Credential Broker Configuration (Database Mode)
 
 server:
   port: 8080
@@ -35,34 +35,12 @@ security:
 database:
   # Enable database for storing policies and access logs
   # When enabled, policies are managed via the UI instead of this config file
-  enabled: false
+  enabled: true
   
   # PostgreSQL connection string
   # Can be overridden with DATABASE_URL environment variable
-  # connection_string: "postgresql://user:password@localhost:5432/harbor_broker?sslmode=disable"
+  connection_string: "postgresql://broker:broker_password@localhost:5432/harbor_broker?sslmode=disable"
 
-# Authorization policies
-policies:
-  # Example: Allow mygroup/myproject to read from backend-project
-  - gitlab_project: "mygroup/myproject"
-    harbor_projects:
-      - "backend-project"
-    allowed_permissions:
-      - "read"
-  
-  # Example: Allow mygroup/deploy-pipeline to read and write to frontend-project
-  - gitlab_project: "mygroup/deploy-pipeline"
-    harbor_projects:
-      - "frontend-project"
-      - "shared-images"
-    allowed_permissions:
-      - "read"
-      - "write"
-      - "read-write"
-  
-  # Example: Allow any project in engineering group to read from library
-  - gitlab_project: "engineering/backend-service"
-    harbor_projects:
-      - "library"
-    allowed_permissions:
-      - "read"
+# Policies section is not used when database is enabled
+# Policies are managed via the UI
+policies: []

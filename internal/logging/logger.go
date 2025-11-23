@@ -7,9 +7,15 @@ import (
 	"time"
 )
 
+// AccessLogStore interface for storing access logs
+type AccessLogStore interface {
+	LogAccess(log interface{}) error
+}
+
 // Logger provides structured logging
 type Logger struct {
-	logger *log.Logger
+	logger         *log.Logger
+	accessLogStore AccessLogStore
 }
 
 // LogEntry represents a structured log entry
@@ -33,6 +39,14 @@ type LogEntry struct {
 func NewLogger() *Logger {
 	return &Logger{
 		logger: log.New(os.Stdout, "", 0),
+	}
+}
+
+// NewLoggerWithStore creates a new structured logger with database storage
+func NewLoggerWithStore(store AccessLogStore) *Logger {
+	return &Logger{
+		logger:         log.New(os.Stdout, "", 0),
+		accessLogStore: store,
 	}
 }
 
@@ -63,6 +77,23 @@ func (l *Logger) AuditTokenIssued(gitlabProject, harborProject, permission strin
 		JobID:         jobID,
 	}
 	l.log("AUDIT", "Token issued", entry)
+
+	// If database store is available, persist to database
+	if l.accessLogStore != nil {
+		dbLog := map[string]interface{}{
+			"timestamp":      time.Now(),
+			"gitlab_project": gitlabProject,
+			"harbor_project": harborProject,
+			"permission":     permission,
+			"robot_id":       robotID,
+			"robot_name":     robotName,
+			"expires_at":     expiresAt,
+			"pipeline_id":    pipelineID,
+			"job_id":         jobID,
+			"status":         "success",
+		}
+		_ = l.accessLogStore.LogAccess(dbLog)
+	}
 }
 
 // AuditRequestDenied logs when a request is denied
@@ -74,6 +105,19 @@ func (l *Logger) AuditRequestDenied(gitlabProject, harborProject, permission, re
 		Error:         reason,
 	}
 	l.log("AUDIT", "Request denied", entry)
+
+	// If database store is available, persist to database
+	if l.accessLogStore != nil {
+		dbLog := map[string]interface{}{
+			"timestamp":       time.Now(),
+			"gitlab_project":  gitlabProject,
+			"harbor_project":  harborProject,
+			"permission":      permission,
+			"status":          "denied",
+			"error_message":   reason,
+		}
+		_ = l.accessLogStore.LogAccess(dbLog)
+	}
 }
 
 // log writes a structured log entry

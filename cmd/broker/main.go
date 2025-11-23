@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/lukaskohlmaier/gitlab-harbor-token-broker/internal/config"
+	"github.com/lukaskohlmaier/gitlab-harbor-token-broker/internal/database"
 	"github.com/lukaskohlmaier/gitlab-harbor-token-broker/internal/handler"
 	"github.com/lukaskohlmaier/gitlab-harbor-token-broker/internal/harbor"
 	"github.com/lukaskohlmaier/gitlab-harbor-token-broker/internal/jwt"
@@ -36,6 +38,43 @@ func main() {
 
 	logger.Info(fmt.Sprintf("Configuration loaded successfully from %s", *configPath))
 
+	// Initialize database if enabled
+	var db *database.DB
+	var apiHandler *handler.APIHandler
+	if cfg.Database.Enabled {
+		logger.Info("Database enabled, connecting...")
+		var err error
+		db, err = database.NewDB(cfg.Database.ConnectionString)
+		if err != nil {
+			logger.Error("Failed to connect to database", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+
+		logger.Info("Database connected successfully")
+
+		// Run migrations
+		migrationSQL, err := os.ReadFile("migrations/001_initial_schema.sql")
+		if err != nil {
+			logger.Error("Failed to read migration file", err)
+			os.Exit(1)
+		}
+
+		if err := db.RunMigrations(string(migrationSQL)); err != nil {
+			logger.Error("Failed to run migrations", err)
+			os.Exit(1)
+		}
+
+		logger.Info("Database migrations completed")
+
+		// Update logger to use database storage
+		accessLogStore := database.NewAccessLogStoreAdapter(db)
+		logger = logging.NewLoggerWithStore(accessLogStore)
+
+		// Initialize API handler for UI
+		apiHandler = handler.NewAPIHandler(db, logger)
+	}
+
 	// Construct JWKS URL if not provided
 	jwksURL := cfg.GitLab.JWKSUrl
 	if jwksURL == "" {
@@ -53,8 +92,17 @@ func main() {
 	logger.Info("JWT validator initialized")
 
 	// Initialize policy engine
-	policyEngine := policy.NewEngine(cfg.Policies)
-	logger.Info(fmt.Sprintf("Policy engine initialized with %d rules", len(cfg.Policies)))
+	var policyEngine *policy.Engine
+	if cfg.Database.Enabled {
+		// Use database-backed policy store
+		policyStore := database.NewPolicyStoreAdapter(db)
+		policyEngine = policy.NewEngineWithStore(policyStore)
+		logger.Info("Policy engine initialized with database storage")
+	} else {
+		// Use config-based policies
+		policyEngine = policy.NewEngine(cfg.Policies)
+		logger.Info(fmt.Sprintf("Policy engine initialized with %d rules from config", len(cfg.Policies)))
+	}
 
 	// Initialize Harbor client
 	harborClient := harbor.NewClient(cfg.Harbor.URL, cfg.Harbor.Username, cfg.Harbor.Password)
@@ -67,6 +115,37 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/token", httpHandler.HandleToken)
 	mux.HandleFunc("/health", httpHandler.HandleHealth)
+
+	// Add API endpoints if database is enabled
+	if cfg.Database.Enabled && apiHandler != nil {
+		mux.HandleFunc("/api/access-logs", corsMiddleware(apiHandler.HandleGetAccessLogs))
+		mux.HandleFunc("/api/policies", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				apiHandler.HandleGetPolicies(w, r)
+			} else if r.Method == http.MethodPost {
+				apiHandler.HandleCreatePolicy(w, r)
+			} else {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+		}))
+		mux.HandleFunc("/api/policies/", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/policies/") && len(r.URL.Path) > len("/api/policies/") {
+				if r.Method == http.MethodPut {
+					apiHandler.HandleUpdatePolicy(w, r)
+				} else if r.Method == http.MethodDelete {
+					apiHandler.HandleDeletePolicy(w, r)
+				} else {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		// Serve static files from ui/dist directory
+		fs := http.FileServer(http.Dir("ui/dist"))
+		mux.Handle("/", fs)
+		logger.Info("API endpoints and static file server enabled")
+	}
 
 	// Create HTTP server
 	server := &http.Server{
@@ -102,4 +181,20 @@ func main() {
 	}
 
 	logger.Info("Server stopped")
+}
+
+// corsMiddleware adds CORS headers for frontend development
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next(w, r)
+	}
 }

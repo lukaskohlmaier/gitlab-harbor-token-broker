@@ -1,6 +1,21 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_DB=harbor_broker
+      - POSTGRES_USER=broker
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-broker_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U broker"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   broker:
     build: .
     ports:
@@ -8,26 +23,34 @@ services:
     volumes:
       # Mount your configuration file
       - ./config.yaml:/app/config.yaml:ro
+      # Mount migrations directory
+      - ./migrations:/app/migrations:ro
+      # Mount UI dist directory
+      - ./ui/dist:/app/ui/dist:ro
     environment:
       # Override Harbor credentials via environment variables
       # This is more secure than storing them in the config file
       - HARBOR_USERNAME=${HARBOR_USERNAME:-admin}
       - HARBOR_PASSWORD=${HARBOR_PASSWORD:-Harbor12345}
+      # Database connection
+      - DATABASE_URL=postgresql://broker:${POSTGRES_PASSWORD:-broker_password}@postgres:5432/harbor_broker?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 5s
+      start_period: 10s
     # Run as non-root user (already configured in Dockerfile)
     # Security options for production
     security_opt:
       - no-new-privileges:true
-    # Read-only root filesystem (except /tmp)
-    read_only: true
-    tmpfs:
-      - /tmp
+
+volumes:
+  postgres_data:
 
 # For production deployment behind a reverse proxy with TLS
   # nginx:

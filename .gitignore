@@ -32,3 +32,7 @@ Thumbs.db
 # Config with secrets (keep example)
 # config.yaml should be version controlled as an example
 # but can be ignored if it contains real secrets
+
+# Node modules and build artifacts
+ui/node_modules/
+ui/dist/
